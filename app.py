@@ -4,6 +4,7 @@ from datetime import datetime
 from PIL import Image
 import gspread
 from google.oauth2.service_account import Credentials
+import base64
 
 # --- Configuración de la página ---
 st.set_page_config(
@@ -41,23 +42,17 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- Conexión con Google Sheets usando los Secretos de Streamlit (Método Moderno y Robusto) ---
+# --- Conexión con Google Sheets usando Base64 (Método 100% Inmune a Errores de Formato) ---
 @st.cache_resource
 def init_connection():
     try:
-        # Lee las credenciales desde los secretos seguros de Streamlit Cloud
         secret_dict = dict(st.secrets["gcp_service_account"])
         
-        # Limpieza robusta de la llave privada para evitar errores de formato PEM o saltos de línea
-        if "private_key" in secret_dict:
-            pk = secret_dict["private_key"]
-            pk = pk.replace("\\n", "\n").replace("\r\n", "\n").strip()
-            if not pk.startswith("-----BEGIN PRIVATE KEY-----"):
-                pk = "-----BEGIN PRIVATE KEY-----\n" + pk
-            if not pk.endswith("-----END PRIVATE KEY-----"):
-                pk = pk + "\n-----END PRIVATE KEY-----"
-            secret_dict["private_key"] = pk
-
+        # Si se usa la clave en Base64, la decodificamos limpiamente
+        if "private_key_b64" in secret_dict:
+            decoded_bytes = base64.b64decode(secret_dict["private_key_b64"])
+            secret_dict["private_key"] = decoded_bytes.decode("utf-8")
+        
         scopes = [
             "https://www.googleapis.com/auth/spreadsheets",
             "https://www.googleapis.com/auth/drive"
@@ -66,7 +61,6 @@ def init_connection():
         creds = Credentials.from_service_account_info(secret_dict, scopes=scopes)
         client = gspread.authorize(creds)
         
-        # Abre la hoja de cálculo por su nombre exacto en Google Drive
         sheet_name = st.secrets["sheets"]["sheet_name"]
         sheet = client.open(sheet_name).sheet1
         return sheet
@@ -188,4 +182,5 @@ elif menu == "Panel Administrativo (Admin)":
             
     elif admin_pin != "":
         st.error("PIN incorrecto. Intente nuevamente.")
+
 
