@@ -1,10 +1,10 @@
+import streamlit as pd_st # Usado internamente o st
 import streamlit as st
 import pandas as pd
 from datetime import datetime
 from PIL import Image
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
-import json
+from google.oauth2.service_account import Credentials
 
 # --- Configuración de la página ---
 st.set_page_config(
@@ -42,17 +42,19 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- Conexión con Google Sheets usando los Secretos de Streamlit ---
+# --- Conexión con Google Sheets usando los Secretos de Streamlit (Método Moderno) ---
 @st.cache_resource
 def init_connection():
     try:
         # Lee las credenciales desde los secretos seguros de Streamlit Cloud
         secret_dict = dict(st.secrets["gcp_service_account"])
-        scope = [
-            "https://spreadsheets.google.com/feeds",
+        
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
             "https://www.googleapis.com/auth/drive"
         ]
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(secret_dict, scope)
+        
+        creds = Credentials.from_service_account_info(secret_dict, scopes=scopes)
         client = gspread.authorize(creds)
         
         # Abre la hoja de cálculo por su nombre exacto en Google Drive
@@ -76,7 +78,6 @@ if menu == "Móvil: Registrar Marcación":
     st.markdown("<p style='text-align: center; color: #555;'>Ingresa tus datos y toma tu foto para registrar tu marcación.</p>", unsafe_allow_html=True)
     
     with st.form("form_marcacion"):
-        # Identificación del trabajador
         col1, col2 = st.columns(2)
         with col1:
             emp_id = st.text_input("Cédula / ID del Trabajador *").strip()
@@ -89,7 +90,6 @@ if menu == "Móvil: Registrar Marcación":
         st.markdown("### 📸 Fotografía de Confirmación")
         st.info("Por favor, habilita tu cámara y toma una foto clara de tu llegada o salida.")
         
-        # Componente de cámara nativo para móviles
         foto_capturada = st.camera_input("Tomar Foto")
         
         submitted = st.form_submit_button("Registrar Marcación")
@@ -101,19 +101,15 @@ if menu == "Móvil: Registrar Marcación":
                 st.warning("⚠️ Es obligatorio tomar la fotografía para validar la marcación.")
             else:
                 try:
-                    # Fecha y hora exacta local (o ajustada)
                     now = datetime.now()
                     fecha_str = now.strftime("%Y-%m-%d")
                     hora_str = now.strftime("%H:%M:%S")
                     timestamp_completo = now.strftime("%Y-%m-%d %H:%M:%S")
                     
-                    # Optimización y compresión de imagen para evitar saturar memoria
                     img = Image.open(foto_capturada)
-                    img.thumbnail((600, 600)) # Redimensiona manteniendo proporción
+                    img.thumbnail((600, 600))
                     
-                    # Registrar en Google Sheets
                     if sheet:
-                        # Columnas: ID, Nombre, Tipo, Fecha, Hora, Timestamp
                         fila_nueva = [emp_id, emp_nombre, tipo_marcacion, fecha_str, hora_str, timestamp_completo]
                         sheet.append_row(fila_nueva)
                         
@@ -137,11 +133,8 @@ if menu == "Móvil: Registrar Marcación":
 elif menu == "Panel Administrativo (Admin)":
     st.markdown("<h1>🔒 Panel de Administración</h1>", unsafe_allow_html=True)
     
-    # Sistema básico de seguridad por PIN
     admin_pin = st.text_input("Ingrese PIN de Administrador:", type="password")
-    
-    # Puedes definir tu PIN secreto directamente aquí o en secrets
-    PIN_CORRECTO = "2026" # Cambia este PIN por seguridad
+    PIN_CORRECTO = "2026"
     
     if admin_pin == PIN_CORRECTO:
         st.success("Acceso concedido.")
@@ -159,7 +152,6 @@ elif menu == "Panel Administrativo (Admin)":
                         st.markdown("---")
                         st.markdown("### 🧮 Resumen y Cálculo de Horas")
                         
-                        # Filtro básico por ID o nombre si se desea
                         trabajadores_unicos = df["ID"].unique() if "ID" in df.columns else []
                         selected_worker = st.selectbox("Filtrar por ID de Trabajador", ["Todos"] + list(trabajadores_unicos))
                         
@@ -170,7 +162,6 @@ elif menu == "Panel Administrativo (Admin)":
                             
                         st.dataframe(df_filtered, use_container_width=True)
                         
-                        # Botón para descargar reporte localmente en Excel si lo requiere el admin
                         csv_data = df.to_csv(index=False).encode('utf-8')
                         st.download_button(
                             label="📥 Descargar Reporte en formato CSV/Excel",
@@ -189,5 +180,3 @@ elif menu == "Panel Administrativo (Admin)":
     elif admin_pin != "":
         st.error("PIN incorrecto. Intente nuevamente.")
         
-
-
