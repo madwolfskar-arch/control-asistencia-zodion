@@ -2,9 +2,7 @@ from datetime import datetime
 import io
 import os
 import textwrap
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
+from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 import gspread
@@ -51,7 +49,7 @@ st.markdown(
 )
 
 
-# --- Conexión con Google Sheets y Google Drive (Con rutas absolutas seguras) ---
+# --- Conexión con Google Sheets y Google Drive usando Cuenta de Servicio ---
 @st.cache_resource
 def init_connections():
   try:
@@ -62,27 +60,16 @@ def init_connections():
 
     # Obtener la ruta exacta de la carpeta donde se encuentra app.py
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    cred_path = os.path.join(base_dir, "credentials.json")
-    token_path = os.path.join(base_dir, "token.json")
+    cred_path = os.path.join(
+        base_dir, "aplicacionwork-511322-9df02763f375.json"
+    )
 
-    creds = None
-    # Si ya existe un token guardado de una sesión anterior, lo cargamos
-    if os.path.exists(token_path):
-      creds = Credentials.from_authorized_user_file(token_path, scopes)
+    # Cargar las credenciales de la cuenta de servicio
+    creds = service_account.Credentials.from_service_account_file(
+        cred_path, scopes=scopes
+    )
 
-    # Si no hay credenciales válidas, iniciamos el flujo con credentials.json
-    if not creds or not creds.valid:
-      if creds and creds.expired and creds.refresh_token:
-        creds.refresh(Request())
-      else:
-        flow = InstalledAppFlow.from_client_secrets_file(cred_path, scopes)
-        creds = flow.run_local_server(port=0)
-
-      # Guardamos el token en la misma carpeta del proyecto
-      with open(token_path, "w") as token:
-        token.write(creds.to_json())
-
-    # Autorizar gspread con las credenciales de usuario personal
+    # Autorizar gspread
     client = gspread.authorize(creds)
 
     # Nombre de tu hoja de cálculo configurada en secrets o fija
@@ -93,7 +80,7 @@ def init_connections():
 
     sheet = client.open(spreadsheet_name).worksheet("Asistencia")
 
-    # Servicio de Google Drive usando la misma sesión personal
+    # Servicio de Google Drive usando la cuenta de servicio
     drive_service = build("drive", "v3", credentials=creds)
 
     return sheet, drive_service
@@ -441,4 +428,5 @@ elif menu == "Panel Administrativo (Admin)":
 
   elif admin_pin != "":
     st.error("PIN de administración incorrecto.")
+
       
