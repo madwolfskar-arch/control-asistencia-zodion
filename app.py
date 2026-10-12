@@ -4,7 +4,6 @@ from datetime import datetime
 from PIL import Image
 import gspread
 from google.oauth2.service_account import Credentials
-import base64
 
 # --- Configuración de la página ---
 st.set_page_config(
@@ -42,16 +41,11 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- Conexión con Google Sheets usando Base64 (Método 100% Inmune a Errores de Formato) ---
+# --- Conexión con Google Sheets usando los Secretos de Streamlit ---
 @st.cache_resource
 def init_connection():
     try:
         secret_dict = dict(st.secrets["gcp_service_account"])
-        
-        # Si se usa la clave en Base64, la decodificamos limpiamente
-        if "private_key_b64" in secret_dict:
-            decoded_bytes = base64.b64decode(secret_dict["private_key_b64"])
-            secret_dict["private_key"] = decoded_bytes.decode("utf-8")
         
         scopes = [
             "https://www.googleapis.com/auth/spreadsheets",
@@ -182,5 +176,4 @@ elif menu == "Panel Administrativo (Admin)":
             
     elif admin_pin != "":
         st.error("PIN incorrecto. Intente nuevamente.")
-
-
+        
