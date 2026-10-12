@@ -4,6 +4,7 @@ from datetime import datetime
 from PIL import Image
 import gspread
 from google.oauth2.service_account import Credentials
+import textwrap
 
 # --- Configuración de la página ---
 st.set_page_config(
@@ -41,12 +42,25 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- Conexión con Google Sheets usando los Secretos de Streamlit ---
+# --- Conexión con Google Sheets (Con Formateo Automático de Llave PEM) ---
 @st.cache_resource
 def init_connection():
     try:
         secret_dict = dict(st.secrets["gcp_service_account"])
         
+        # Saneamiento y reconstrucción matemática de la llave PEM para evitar cualquier error de offset o símbolos
+        if "private_key" in secret_dict:
+            raw_key = secret_dict["private_key"]
+            # Limpiar cabeceras, pies, espacios y saltos de línea previos
+            clean_base64 = raw_key.replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", "")
+            clean_base64 = "".join(clean_base64.split()) # Elimina espacios, \n y \r
+            
+            # Re-empaquetar estrictamente en líneas de 64 caracteres (estándar PEM)
+            wrapped_lines = textwrap.wrap(clean_base64, 64)
+            formatted_pem = "-----BEGIN PRIVATE KEY-----\n" + "\n".join(wrapped_lines) + "\n-----END PRIVATE KEY-----\n"
+            
+            secret_dict["private_key"] = formatted_pem
+
         scopes = [
             "https://www.googleapis.com/auth/spreadsheets",
             "https://www.googleapis.com/auth/drive"
@@ -85,7 +99,7 @@ if menu == "Móvil: Registrar Marcación":
         
         st.markdown("---")
         st.markdown("### 📸 Fotografía de Confirmación")
-        st.info("Por favor, habilita tu cámara y toma una foto clara de tu llegada o salida.")
+        st.info("Por favor, habilita tu cámara y toma una foto clara de thy llegada o salida.")
         
         foto_capturada = st.camera_input("Tomar Foto")
         
@@ -177,3 +191,4 @@ elif menu == "Panel Administrativo (Admin)":
     elif admin_pin != "":
         st.error("PIN incorrecto. Intente nuevamente.")
         
+
