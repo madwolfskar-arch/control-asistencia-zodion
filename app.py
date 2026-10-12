@@ -1,12 +1,17 @@
+import os
+import io
+import textwrap
 import streamlit as st
 import pandas as pd
 from datetime import datetime
 import gspread
-from google.oauth2.service_account import Credentials
+
+# Librerías necesarias para la autenticación OAuth 2.0 de usuario
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
-import io
-import textwrap
 
 # --- Configuración de la página ---
 st.set_page_config(
@@ -44,33 +49,45 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- Conexión con Google Sheets y Google Drive ---
+# --- Conexión con Google Sheets y Google Drive (Usando OAuth Usuario) ---
 @st.cache_resource
 def init_connections():
     try:
-        secret_dict = dict(st.secrets["gcp_service_account"])
-        
-        # Saneamiento y reconstrucción de la llave PEM
-        if "private_key" in secret_dict:
-            raw_key = secret_dict["private_key"]
-            clean_base64 = raw_key.replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", "")
-            clean_base64 = "".join(clean_base64.split())
-            wrapped_lines = textwrap.wrap(clean_base64, 64)
-            formatted_pem = "-----BEGIN PRIVATE KEY-----\n" + "\n".join(wrapped_lines) + "\n-----END PRIVATE KEY-----\n"
-            secret_dict["private_key"] = formatted_pem
-
         scopes = [
             "https://www.googleapis.com/auth/spreadsheets",
             "https://www.googleapis.com/auth/drive"
         ]
         
-        creds = Credentials.from_service_account_info(secret_dict, scopes=scopes)
+        creds = None
+        # Si ya existe un token guardado de una sesión anterior, lo cargamos
+        if os.path.exists('token.json'):
+            creds = Credentials.from_authorized_user_file('token.json', scopes)
+            
+        # Si no hay credenciales válidas, iniciamos el flujo con credentials.json
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+            else:
+                flow = InstalledAppFlow.from_client_secrets_file(
+                    'credentials.json', scopes)
+                creds = flow.run_local_server(port=0)
+                
+            # Guardamos el token para futuras ejecuciones automáticas
+            with open('token.json', 'w') as token:
+                token.write(creds.to_json())
+
+        # Autorizar gspread con las credenciales de usuario personal
         client = gspread.authorize(creds)
         
-        spreadsheet_name = st.secrets["sheets"]["sheet_name"]
+        # Nombre de tu hoja de cálculo configurada en secrets o fija
+        try:
+            spreadsheet_name = st.secrets["sheets"]["sheet_name"]
+        except Exception:
+            spreadsheet_name = "ControlAsistenciaZodion"
+            
         sheet = client.open(spreadsheet_name).worksheet("Asistencia")
         
-        # Servicio de Google Drive para gestionar carpetas e imágenes
+        # Servicio de Google Drive usando la misma sesión personal
         drive_service = build('drive', 'v3', credentials=creds)
         
         return sheet, drive_service
@@ -83,7 +100,6 @@ sheet, drive_service = init_connections()
 # --- Función para obtener o crear la carpeta del establecimiento en Drive ---
 def obtener_o_crear_carpeta_drive(drive_svc, nombre_establecimiento):
     try:
-        # Buscar si la carpeta ya existe
         query = f"mimeType='application/vnd.google-apps.folder' and name='{nombre_establecimiento}' and trashed=false"
         results = drive_svc.files().list(q=query, spaces='drive', fields="files(id, name)").execute()
         folders = results.get('files', [])
@@ -91,7 +107,6 @@ def obtener_o_crear_carpeta_drive(drive_svc, nombre_establecimiento):
         if folders:
             return folders[0]['id']
         else:
-            # Si no existe, crear la carpeta automáticamente
             file_metadata = {
                 'name': nombre_establecimiento,
                 'mimeType': 'application/vnd.google-apps.folder'
@@ -110,7 +125,6 @@ def subir_foto_a_drive(drive_svc, folder_id, archivo_foto, nombre_archivo):
             'parents': [folder_id]
         }
         
-        # Leer los bytes de la foto capturada por Streamlit
         bytes_foto = archivo_foto.getvalue()
         media = MediaIoBaseUpload(io.BytesIO(bytes_foto), mimetype='image/jpeg', resumable=True)
         
@@ -139,7 +153,6 @@ if menu == "Móvil: Registrar Marcación":
     st.markdown("<p style='text-align: center; color: #555;'>Selecciona tu establecimiento, ingresa tus datos, evento y confirma con la foto.</p>", unsafe_allow_html=True)
     
     with st.form("form_marcacion"):
-        # Selección de establecimiento (5 iniciales + opción personalizada)
         lista_establecimientos = [
             "Establecimiento A - Restaurante Central",
             "Establecimiento B - Cafetería Norte",
@@ -199,17 +212,10 @@ if menu == "Móvil: Registrar Marcación":
                     
                     if sheet and drive_service:
                         with st.spinner("Subiendo evidencia y registrando asistencia..."):
-                            # 1. Obtener o crear carpeta independiente en Drive para este establecimiento
                             folder_id = obtener_o_crear_carpeta_drive(drive_service, establecimiento_final)
-                            
-                            # 2. Nombrar archivo de foto con metadatos estructurados
                             nombre_archivo_foto = f"{fecha_str}_{hora_str.replace(':','-')}_{emp_id}_{tipo_marcacion.split()[1]}.jpg"
-                            
-                            # 3. Subir foto a la carpeta de Drive y obtener el enlace
                             url_foto = subir_foto_a_drive(drive_service, folder_id, foto_capturada, nombre_archivo_foto)
                             
-                            # 4. Guardar fila en Google Sheets (Incluyendo Establecimiento y Link de Foto)
-                            # Estructura: [Establecimiento, ID, Nombre, Cargo, Tipo, Fecha, Hora, Timestamp, Link_Foto]
                             fila_nueva = [establecimiento_final, emp_id, emp_nombre, emp_cargo, tipo_marcacion, fecha_str, hora_str, timestamp_completo, url_foto]
                             sheet.append_row(fila_nueva)
                         
@@ -250,7 +256,6 @@ elif menu == "Panel Administrativo (Admin)":
                         
                         st.markdown("### 🧮 Cálculo Automático de Horas para Nómina")
                         
-                        # Filtro por establecimiento si existen datos
                         if "Establecimiento" in df.columns:
                             estab_unicos = ["Todos"] + list(df["Establecimiento"].unique())
                             filtro_estab = st.selectbox("Filtrar por Establecimiento:", estab_unicos)
@@ -270,8 +275,6 @@ elif menu == "Panel Administrativo (Admin)":
                         
                         if not df_periodo.empty:
                             resumen_horas = []
-                            
-                            # Agrupar por Establecimiento, ID, Nombre, Cargo y Fecha
                             grouped = df_periodo.groupby(["Establecimiento", "ID", "Nombre", "Cargo", "Fecha"])
                             
                             for (estab, emp_id, nombre, cargo, fecha), group in grouped:
@@ -349,5 +352,3 @@ elif menu == "Panel Administrativo (Admin)":
     elif admin_pin != "":
         st.error("PIN de administración incorrecto.")
         
-
-
