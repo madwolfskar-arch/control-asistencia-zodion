@@ -61,16 +61,12 @@ def init_connections():
     # Intentar cargar credenciales desde Streamlit Secrets (para la nube)
     if "gcp_service_account" in st.secrets:
       creds_dict = dict(st.secrets["gcp_service_account"])
-      # Asegurar formato correcto de la clave privada eliminando espacios extra o saltos mal interpretados
+      
+      # Asegurar el reemplazo correcto de los saltos de línea en la clave privada
       if "private_key" in creds_dict:
-        pk = creds_dict["private_key"].strip()
-        if not pk.startswith("-----BEGIN PRIVATE KEY-----"):
-          # Si por error se pegó con comillas literales o saltos iniciales
-          pk = (
-              pk.replace("\\n", "\n")
-              .replace('"', "")
-              .strip()
-          )
+        pk = creds_dict["private_key"]
+        # Si la clave viene en formato plano con \n literales, los convertimos a saltos reales
+        pk = pk.replace("\\n", "\n")
         creds_dict["private_key"] = pk
 
       creds = service_account.Credentials.from_service_account_info(
@@ -442,5 +438,3 @@ elif menu == "Panel Administrativo (Admin)":
 
   elif admin_pin != "":
     st.error("PIN de administración incorrecto.")
-      
-
