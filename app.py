@@ -49,7 +49,7 @@ st.markdown(
 )
 
 
-# --- Conexión con Google Sheets y Google Drive usando Cuenta de Servicio ---
+# --- Conexión con Google Sheets y Google Drive (Híbrido: Local y Cloud) ---
 @st.cache_resource
 def init_connections():
   try:
@@ -58,29 +58,31 @@ def init_connections():
         "https://www.googleapis.com/auth/drive",
     ]
 
-    # Obtener la ruta exacta de la carpeta donde se encuentra app.py
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    cred_path = os.path.join(
-        base_dir, "aplicacionwork-511322-9df02763f375.json"
-    )
+    # Intentar cargar credenciales desde Streamlit Secrets (para la nube)
+    if "gcp_service_account" in st.secrets:
+      creds_dict = dict(st.secrets["gcp_service_account"])
+      creds = service_account.Credentials.from_service_account_info(
+          creds_dict, scopes=scopes
+      )
+    else:
+      # Si no hay secrets (ejecución local), busca el archivo físico
+      base_dir = os.path.dirname(os.path.abspath(__file__))
+      cred_path = os.path.join(
+          base_dir, "aplicacionwork-511322-9df02763f375.json"
+      )
+      creds = service_account.Credentials.from_service_account_file(
+          cred_path, scopes=scopes
+      )
 
-    # Cargar las credenciales de la cuenta de servicio
-    creds = service_account.Credentials.from_service_account_file(
-        cred_path, scopes=scopes
-    )
-
-    # Autorizar gspread
+    # Autorizar gspread y Drive
     client = gspread.authorize(creds)
 
-    # Nombre de tu hoja de cálculo configurada en secrets o fija
     try:
       spreadsheet_name = st.secrets["sheets"]["sheet_name"]
     except Exception:
       spreadsheet_name = "ControlAsistenciaZodion"
 
     sheet = client.open(spreadsheet_name).worksheet("Asistencia")
-
-    # Servicio de Google Drive usando la cuenta de servicio
     drive_service = build("drive", "v3", credentials=creds)
 
     return sheet, drive_service
@@ -428,5 +430,4 @@ elif menu == "Panel Administrativo (Admin)":
 
   elif admin_pin != "":
     st.error("PIN de administración incorrecto.")
-
       
