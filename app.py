@@ -49,7 +49,7 @@ st.markdown(
 )
 
 
-# --- Conexión con Google Sheets y Google Drive (Híbrido: Local y Cloud) ---
+# --- Conexión con Google Sheets y Google Drive (Híbrido: Local y Cloud robusto) ---
 @st.cache_resource
 def init_connections():
   try:
@@ -61,12 +61,11 @@ def init_connections():
     # Intentar cargar credenciales desde Streamlit Secrets (para la nube)
     if "gcp_service_account" in st.secrets:
       creds_dict = dict(st.secrets["gcp_service_account"])
-      
-      # Asegurar el reemplazo correcto de los saltos de línea en la clave privada
+
+      # Reparar la clave privada para asegurar los saltos de línea reales de PEM
       if "private_key" in creds_dict:
         pk = creds_dict["private_key"]
-        # Si la clave viene en formato plano con \n literales, los convertimos a saltos reales
-        pk = pk.replace("\\n", "\n")
+        pk = pk.replace("\\\\n", "\n").replace("\\n", "\n")
         creds_dict["private_key"] = pk
 
       creds = service_account.Credentials.from_service_account_info(
