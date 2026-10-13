@@ -13,6 +13,10 @@ st.set_page_config(page_title="Control de Asistencia - Zodion", page_icon="📲"
 # ID de la carpeta principal compartida en Google Drive para las evidencias
 CARPETA_RAIZ_ID = "1nx8rVRoA0r8SDOZP0zZdlh-D4Gnp8Acs"
 
+# Inicializar el estado de la sesión para mantener el acceso abierto
+if "admin_autenticado" not in st.session_state:
+    st.session_state["admin_autenticado"] = False
+
 # Función para conectar a Google Sheets y Google Drive con manejo seguro de credenciales
 @st.cache_resource
 def conectar_google():
@@ -34,12 +38,10 @@ def conectar_google():
         
         creds = Credentials.from_service_account_info(secret_dict, scopes=scopes)
         
-        # Conexión a Gspread (Sheets)
         client = gspread.authorize(creds)
         sheet_name = st.secrets["sheets"]["sheet_name"]
         sheet = client.open(sheet_name).sheet1
         
-        # Conexión a Google Drive API
         drive_service = build('drive', 'v3', credentials=creds)
         
         return sheet, drive_service
@@ -49,7 +51,7 @@ def conectar_google():
 
 sheet, drive_service = conectar_google()
 
-# Función para obtener o crear la subcarpeta del establecimiento dentro de la carpeta raíz compartida
+# Función para obtener o crear la subcarpeta del establecimiento
 def obtener_o_crear_carpeta_drive(drive_svc, nombre_establecimiento, parent_id):
     try:
         query = f"mimeType='application/vnd.google-apps.folder' and name='{nombre_establecimiento}' and '{parent_id}' in parents and trashed=false"
@@ -70,9 +72,36 @@ def obtener_o_crear_carpeta_drive(drive_svc, nombre_establecimiento, parent_id):
         st.error(f"Error gestionando carpeta en Drive: {e}")
         return None
 
-# Interfaz de Usuario
+# Interfaz de Usuario - Cabecera
 st.title("📲 Control de Asistencia - Zodion")
-st.markdown("Selecciona tu establecimiento, ingresa tus datos, evento y confirma con la foto.")
+st.markdown("Sistema de registro de control de personal y evidencias.")
+
+# --- CONTROL DE SESIÓN POR PIN (SEGURIDAD DESDE SECRETS) ---
+if not st.session_state["admin_autenticado"]:
+    st.markdown("---")
+    st.subheader("🔐 Acceso Administrativo")
+    pin_ingresado = st.text_input("Ingrese el PIN de seguridad para iniciar sesión:", type="password")
+    
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        if st.button("Ingresar", type="primary"):
+            # Leer de forma segura el PIN desde los Secrets
+            pin_correcto = st.secrets["admin"]["pin"]
+            if pin_ingresado == pin_correcto:
+                st.session_state["admin_autenticado"] = True
+                st.rerun()
+            else:
+                st.error("PIN incorrecto.")
+    st.stop()
+
+# Si ya está autenticado, muestra el panel lateral para cerrar sesión si se requiere
+with st.sidebar:
+    st.markdown("### Panel de Control")
+    if st.button("Cerrar Sesión Administrador"):
+        st.session_state["admin_autenticado"] = False
+        st.rerun()
+
+st.markdown("---")
 
 # Opciones base de establecimientos
 establecimientos_base = [
@@ -120,11 +149,9 @@ if st.button("Registrar Asistencia", type="primary"):
     else:
         with st.spinner("Subiendo evidencia y registrando asistencia..."):
             try:
-                # 1. Crear o buscar subcarpeta del establecimiento dentro de la carpeta raíz compartida
                 folder_id = obtener_o_crear_carpeta_drive(drive_service, establecimiento_final, CARPETA_RAIZ_ID)
                 
                 if folder_id:
-                    # 2. Preparar el archivo de imagen para subir a Drive
                     timestamp_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
                     file_name = f"{cedula}_{timestamp_str}.jpg"
                     
@@ -139,7 +166,6 @@ if st.button("Registrar Asistencia", type="primary"):
                         resumable=True
                     )
                     
-                    # Subir archivo
                     file = drive_service.files().create(
                         body=file_metadata,
                         media_body=media,
@@ -148,7 +174,6 @@ if st.button("Registrar Asistencia", type="primary"):
                     
                     link_foto = file.get('webViewLink', '')
                     
-                    # 3. Guardar registro en Google Sheets
                     fecha_actual = datetime.now().strftime("%Y-%m-%d")
                     hora_actual = datetime.now().strftime("%H:%M:%S")
                     timestamp_completo = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -173,5 +198,3 @@ if st.button("Registrar Asistencia", type="primary"):
             except Exception as e:
                 st.error(f"Error al procesar el registro: {e}")
                 
-
-
