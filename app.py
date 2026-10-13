@@ -3,33 +3,32 @@ import gspread
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
-import io
-from datetime import datetime
-import textwrap
+io_module = __import__('io')
+datetime_module = __import__('datetime').datetime
 
 # Configuración de la página
 st.set_page_config(page_title="Control de Asistencia - Zodion", page_icon="📲", layout="centered")
 
-# ID de la carpeta principal compartida en Google Drive para las evidencias
 CARPETA_RAIZ_ID = "1nx8rVRoA0r8SDOZP0zZdlh-D4Gnp8Acs"
 
-# Inicializar el estado de la sesión para mantener el acceso abierto
 if "admin_autenticado" not in st.session_state:
     st.session_state["admin_autenticado"] = False
 
-# Función para conectar a Google Sheets y Google Drive con manejo seguro de credenciales
+# Función robusta de conexión a Google
 @st.cache_resource
 def conectar_google():
     try:
         secret_dict = dict(st.secrets["gcp_service_account"])
         
+        # Limpieza estricta y formato correcto del PEM de la llave privada
         if "private_key" in secret_dict:
-            raw_key = secret_dict["private_key"]
-            clean_base64 = raw_key.replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", "")
-            clean_base64 = "".join(clean_base64.split())
-            wrapped_lines = textwrap.wrap(clean_base64, 64)
-            formatted_pem = "-----BEGIN PRIVATE KEY-----\n" + "\n".join(wrapped_lines) + "\n-----END PRIVATE KEY-----\n"
-            secret_dict["private_key"] = formatted_pem
+            pk = secret_dict["private_key"]
+            pk = pk.replace("\\n", "\n")  # Asegurar saltos de línea reales
+            if not pk.startswith("-----BEGIN PRIVATE KEY-----"):
+                pk = "-----BEGIN PRIVATE KEY-----\n" + pk
+            if not pk.endswith("-----END PRIVATE KEY-----"):
+                pk = pk.strip() + "\n-----END PRIVATE KEY-----\n"
+            secret_dict["private_key"] = pk
 
         scopes = [
             "https://www.googleapis.com/auth/spreadsheets",
@@ -37,13 +36,11 @@ def conectar_google():
         ]
         
         creds = Credentials.from_service_account_info(secret_dict, scopes=scopes)
-        
         client = gspread.authorize(creds)
         sheet_name = st.secrets["sheets"]["sheet_name"]
         sheet = client.open(sheet_name).sheet1
         
         drive_service = build('drive', 'v3', credentials=creds)
-        
         return sheet, drive_service
     except Exception as e:
         st.error(f"Error de conexión con Google: {e}")
@@ -51,7 +48,6 @@ def conectar_google():
 
 sheet, drive_service = conectar_google()
 
-# Función para obtener o crear la subcarpeta del establecimiento
 def obtener_o_crear_carpeta_drive(drive_svc, nombre_establecimiento, parent_id):
     try:
         query = f"mimeType='application/vnd.google-apps.folder' and name='{nombre_establecimiento}' and '{parent_id}' in parents and trashed=false"
@@ -72,11 +68,10 @@ def obtener_o_crear_carpeta_drive(drive_svc, nombre_establecimiento, parent_id):
         st.error(f"Error gestionando carpeta en Drive: {e}")
         return None
 
-# Interfaz de Usuario - Cabecera
 st.title("📲 Control de Asistencia - Zodion")
 st.markdown("Sistema de registro de control de personal y evidencias.")
 
-# --- CONTROL DE SESIÓN POR PIN (SEGURIDAD DESDE SECRETS) ---
+# --- CONTROL DE SESIÓN POR PIN ---
 if not st.session_state["admin_autenticado"]:
     st.markdown("---")
     st.subheader("🔐 Acceso Administrativo")
@@ -85,7 +80,6 @@ if not st.session_state["admin_autenticado"]:
     col1, col2 = st.columns([1, 3])
     with col1:
         if st.button("Ingresar", type="primary"):
-            # Leer de forma segura el PIN desde los Secrets
             pin_correcto = st.secrets["admin"]["pin"]
             if pin_ingresado == pin_correcto:
                 st.session_state["admin_autenticado"] = True
@@ -94,7 +88,6 @@ if not st.session_state["admin_autenticado"]:
                 st.error("PIN incorrecto.")
     st.stop()
 
-# Si ya está autenticado, muestra el panel lateral para cerrar sesión si se requiere
 with st.sidebar:
     st.markdown("### Panel de Control")
     if st.button("Cerrar Sesión Administrador"):
@@ -103,7 +96,6 @@ with st.sidebar:
 
 st.markdown("---")
 
-# Opciones base de establecimientos
 establecimientos_base = [
     "Seleccione...",
     "Establecimiento A - La Canasta",
@@ -152,7 +144,7 @@ if st.button("Registrar Asistencia", type="primary"):
                 folder_id = obtener_o_crear_carpeta_drive(drive_service, establecimiento_final, CARPETA_RAIZ_ID)
                 
                 if folder_id:
-                    timestamp_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+                    timestamp_str = datetime_module.now().strftime("%Y-%m-%d_%H-%M-%S")
                     file_name = f"{cedula}_{timestamp_str}.jpg"
                     
                     file_metadata = {
@@ -161,7 +153,7 @@ if st.button("Registrar Asistencia", type="primary"):
                     }
                     
                     media = MediaIoBaseUpload(
-                        io.BytesIO(foto_capturada.getvalue()),
+                        io_module.BytesIO(foto_capturada.getvalue()),
                         mimetype='image/jpeg',
                         resumable=True
                     )
@@ -174,9 +166,9 @@ if st.button("Registrar Asistencia", type="primary"):
                     
                     link_foto = file.get('webViewLink', '')
                     
-                    fecha_actual = datetime.now().strftime("%Y-%m-%d")
-                    hora_actual = datetime.now().strftime("%H:%M:%S")
-                    timestamp_completo = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    fecha_actual = datetime_module.now().strftime("%Y-%m-%d")
+                    hora_actual = datetime_module.now().strftime("%H:%M:%S")
+                    timestamp_completo = datetime_module.now().strftime("%Y-%m-%d %H:%M:%S")
                     
                     fila = [
                         establecimiento_final,
@@ -198,3 +190,4 @@ if st.button("Registrar Asistencia", type="primary"):
             except Exception as e:
                 st.error(f"Error al procesar el registro: {e}")
                 
+
