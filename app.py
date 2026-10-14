@@ -1,72 +1,16 @@
 import streamlit as st
-import gspread
-from google.oauth2.service_account import Credentials
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
-io_module = __import__('io')
-datetime_module = __import__('datetime').datetime
+import requests
+import json
+import base64
 
 # Configuración de la página
 st.set_page_config(page_title="Control de Asistencia - Zodion", page_icon="📲", layout="centered")
 
-CARPETA_RAIZ_ID = "1nx8rVRoA0r8SDOZP0zZdlh-D4Gnp8Acs"
+# URL de la Aplicación Web de Google Apps Script
+WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyo42rKvU2fhYeBSMEe8xGujZk8umURYMT5yeERlBzEYjerlPiHQ2gXpd3AE6OIpc3d/exec"
 
 if "admin_autenticado" not in st.session_state:
     st.session_state["admin_autenticado"] = False
-
-# Función robusta de conexión a Google
-@st.cache_resource
-def conectar_google():
-    try:
-        secret_dict = dict(st.secrets["gcp_service_account"])
-        
-        # Limpieza estricta y formato correcto del PEM de la llave privada
-        if "private_key" in secret_dict:
-            pk = secret_dict["private_key"]
-            pk = pk.replace("\\n", "\n")  # Asegurar saltos de línea reales
-            if not pk.startswith("-----BEGIN PRIVATE KEY-----"):
-                pk = "-----BEGIN PRIVATE KEY-----\n" + pk
-            if not pk.endswith("-----END PRIVATE KEY-----"):
-                pk = pk.strip() + "\n-----END PRIVATE KEY-----\n"
-            secret_dict["private_key"] = pk
-
-        scopes = [
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive"
-        ]
-        
-        creds = Credentials.from_service_account_info(secret_dict, scopes=scopes)
-        client = gspread.authorize(creds)
-        sheet_name = st.secrets["sheets"]["sheet_name"]
-        sheet = client.open(sheet_name).sheet1
-        
-        drive_service = build('drive', 'v3', credentials=creds)
-        return sheet, drive_service
-    except Exception as e:
-        st.error(f"Error de conexión con Google: {e}")
-        return None, None
-
-sheet, drive_service = conectar_google()
-
-def obtener_o_crear_carpeta_drive(drive_svc, nombre_establecimiento, parent_id):
-    try:
-        query = f"mimeType='application/vnd.google-apps.folder' and name='{nombre_establecimiento}' and '{parent_id}' in parents and trashed=false"
-        results = drive_svc.files().list(q=query, spaces='drive', fields="files(id, name)").execute()
-        folders = results.get('files', [])
-        
-        if folders:
-            return folders[0]['id']
-        else:
-            file_metadata = {
-                'name': nombre_establecimiento,
-                'mimeType': 'application/vnd.google-apps.folder',
-                'parents': [parent_id]
-            }
-            folder = drive_svc.files().create(body=file_metadata, fields='id').execute()
-            return folder.get('id')
-    except Exception as e:
-        st.error(f"Error gestionando carpeta en Drive: {e}")
-        return None
 
 st.title("📲 Control de Asistencia - Zodion")
 st.markdown("Sistema de registro de control de personal y evidencias.")
@@ -136,58 +80,40 @@ foto_capturada = st.camera_input("Tomar Foto de Evidencia")
 if st.button("Registrar Asistencia", type="primary"):
     if not establecimiento_final or not cedula or not nombre or not cargo or not foto_capturada:
         st.warning("Por favor complete todos los campos obligatorios y tome la fotografía de evidencia.")
-    elif not sheet or not drive_service:
-        st.error("No hay conexión activa con Google Sheets o Drive. Verifique los Secrets.")
     else:
         with st.spinner("Subiendo evidencia y registrando asistencia..."):
             try:
-                folder_id = obtener_o_crear_carpeta_drive(drive_service, establecimiento_final, CARPETA_RAIZ_ID)
-                
-                if folder_id:
-                    timestamp_str = datetime_module.now().strftime("%Y-%m-%d_%H-%M-%S")
-                    file_name = f"{cedula}_{timestamp_str}.jpg"
-                    
-                    file_metadata = {
-                        'name': file_name,
-                        'parents': [folder_id]
-                    }
-                    
-                    media = MediaIoBaseUpload(
-                        io_module.BytesIO(foto_capturada.getvalue()),
-                        mimetype='image/jpeg',
-                        resumable=True
-                    )
-                    
-                    file = drive_service.files().create(
-                        body=file_metadata,
-                        media_body=media,
-                        fields='id, webViewLink'
-                    ).execute()
-                    
-                    link_foto = file.get('webViewLink', '')
-                    
-                    fecha_actual = datetime_module.now().strftime("%Y-%m-%d")
-                    hora_actual = datetime_module.now().strftime("%H:%M:%S")
-                    timestamp_completo = datetime_module.now().strftime("%Y-%m-%d %H:%M:%S")
-                    
-                    fila = [
-                        establecimiento_final,
-                        cedula,
-                        nombre,
-                        cargo,
-                        tipo_evento,
-                        fecha_actual,
-                        hora_actual,
-                        timestamp_completo,
-                        link_foto
-                    ]
-                    
-                    sheet.append_row(fila)
-                    st.success("¡Asistencia registrada y foto guardada con éxito en Google Drive!")
+                # Convertir la foto tomada por la cámara a formato Base64
+                bytes_data = foto_capturada.getvalue()
+                base64_image = base64.b64encode(bytes_data).decode('utf-8')
+                data_uri = f"data:image/jpeg;base64,{base64_image}"
+
+                # Preparar el cuerpo de la petición hacia Google Apps Script
+                payload = {
+                    "establecimiento": establecimiento_final,
+                    "cedula": cedula,
+                    "nombre": nombre,
+                    "cargo": cargo,
+                    "evento": tipo_evento,
+                    "fileData": data_uri,
+                    "fileName": f"evidencia_{cedula}.jpg"
+                }
+
+                # Enviar petición POST al endpoint de Apps Script
+                response = requests.post(
+                    WEB_APP_URL,
+                    data=json.dumps(payload),
+                    headers={"Content-Type": "text/plain;charset=utf-8"}
+                )
+
+                resultado = response.json()
+
+                if resultado.get("status") == "success":
+                    st.success("¡Asistencia registrada y foto guardada con éxito!")
                     st.balloons()
                 else:
-                    st.error("No se pudo crear o acceder a la carpeta de destino en Google Drive.")
-            except Exception as e:
-                st.error(f"Error al procesar el registro: {e}")
-                
+                    st.error(f"Error al procesar el registro: {resultado.get('message')}")
 
+            except Exception as e:
+                st.error(f"Error en la comunicación con el servidor: {e}")
+                
